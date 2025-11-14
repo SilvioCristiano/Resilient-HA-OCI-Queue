@@ -107,19 +107,23 @@ The solution implements the following HA flow:
 5. Explanation of the High Availability Flow
 
 1️⃣ Normal Flow
+
 Producer sends to Primary Queue – Region A (Vinhedo)
 Consumer reads from the Primary Queue
 
 2️⃣ Failure in the Primary Region
+
 Producer tries multiple times (exponential backoff)
 All attempts fail → failover begins
 
 3️⃣ Automatic Failover
+
 Producer detects that there is no Secondary Queue OCID
 Producer dynamically creates a new queue in Region B (SP)
 Producer saves the new OCID in queue.properties
 
 4️⃣ Automatic Consumer Update
+
 Consumer, before each read from the secondary queue, calls:
 
     QueueUtils.loadSecondaryQueue()
