@@ -6,7 +6,8 @@ This solution demonstrates the resilience of a Java application (Producer and Co
 
 The solution implements the following HA flow:
 
-![Logo da empresa](p1.png "Logotipo principal")
+![Logo da empresa](p1.png "Produce")
+![Logo da empresa](p2.png "Consume")
 
 1. **Producer (ResilientHAQueueProducer):** Attempts to send messages to the **Primary Queue** with exponential retries for transient errors.  
 2. **Producer Failover:** If sending persistently fails at the Primary Queue after all retries, the Producer checks for a configured Secondary Queue OCID.  
