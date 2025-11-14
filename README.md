@@ -17,6 +17,27 @@ The solution implements the following HA flow:
 
 ## **2\. Component Overview**
 
+                   ┌─────────────────────────────────────────┐
+                   │        Region A – Vinhedo (Primária)     │
+                   │                                           │
+                   │   ┌──────────────────────────────┐        │
+                   │   │       OCI Queue (Primary)     │◄────────────┐
+                   │   └──────────────────────────────┘        │      │
+                   │                                           │      │
+                   └───────────────────────────────────────────┘      │
+                                                                       │
+                                                                       │
+                                                                       │ (Failover automático)
+                                                                       │
+                   ┌─────────────────────────────────────────┐        │
+                   │   Region B – São Paulo (Secundária)     │        │
+                   │                                           │       │
+        ┌──────────┴───────┐    Dynamic Creation     ┌───────────┴────┴─────────┐
+        │ QueueAdminClient  │────────────────────────►│  OCI Queue (Secondary)   │
+        └───────────────────┘                         └──────────────────────────┘
+
+
+
 | File/Class | Primary Role | Configuration Dependencies |
 | :---- | :---- | :---- |
 | queue.properties | Configuration file for persisting the Secondary Queue OCID created during dynamic failover. | N/A |
