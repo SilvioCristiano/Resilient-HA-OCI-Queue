@@ -16,6 +16,7 @@ The solution implements the following HA flow:
 5. **Real-Time Consumer Update:** The Consumer calls QueueUtils.loadSecondaryQueue() **before every consumption attempt** from the secondary client. This ensures the Consumer always uses the most recent Secondary Queue OCID, immediately picking up the new OCID if the Producer dynamically created a new queue.
 
 ## **2\. Component Overview**
+1. Architectural Diagram (Visual Style / Blocks)
 
                    ┌─────────────────────────────────────────┐
                    │        Region A – Vinhedo (Primária)     │
@@ -37,6 +38,98 @@ The solution implements the following HA flow:
         └───────────────────┘                         └──────────────────────────┘
 
 
+PRODUCER (Java)
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │ ResilientHAQueueProducer                                                │
+   │   └─ QueueManager                                                       │
+   │        ├─ sendMessage()                                                 │
+   │        │     ├─ Try Primary (retries with backoff)                      │
+   │        │     ├─ If fail → load secondaryQueueId()                       │
+   │        │     ├─ If empty → createSecondaryQueue()                       │
+   │        │     └─ sendToSecondary()                                       │
+   │        └─ QueueUtils.saveSecondaryQueueId()                              │
+   └─────────────────────────────────────────────────────────────────────────┘
+
+CONSUMER (Java)
+   ┌─────────────────────────────────────────────────────────────────────────┐
+   │ ResilientQueueConsumer                                                  │
+   │   ├─ consumeWithRetryAndFailover()                                      │
+   │   │      ├─ Try Primary (retries)                                       │
+   │   │      ├─ If fail → loadSecondaryQueue() (absolute path)              │
+   │   │      └─ consumeFromSecondary()                                      │
+   │   └─ Real-time update: always reloads queue.properties before consuming  │
+   └─────────────────────────────────────────────────────────────────────────┘
+
+2. Complete Architecture – Integration Between Components
+┌───────────────────────────────┐
+                               │     queue.properties           │
+                               │  (Secondary Queue OCID store)  │
+                               └──────────────┬────────────────┘
+                                              │
+                                              │ read/write
+                                              │
+                     ┌───────────────────────▼──────────────────────┐
+                     │                QueueUtils                    │
+                     │  - loadSecondaryQueueId()                    │
+                     │  - saveSecondaryQueueId()                    │
+                     │  - loadSecondaryQueue() (Consumer)           │
+                     └───────────────────────▲──────────────────────┘
+                                             │
+                                             │ used by both
+                                             │
+                 ┌───────────────────────────┴──────────────────────────────┐
+                 │                        QueueManager                       │
+                 │   - sendMessage()                                         │
+                 │       → try Primary                                       │
+                 │       → if fail: create/persist Secondary Queue           │
+                 │   - createSecondaryQueue() (QueueAdminClient + polling)   │
+                 └───────────────────────────┬──────────────────────────────┘
+                                             │
+              ┌──────────────────────────────┼──────────────────────────────┐
+              │                              │                              │
+              │                              │                              │
+┌─────────────▼───────────────┐   ┌──────────▼──────────────┐   ┌───────────▼──────────────┐
+│   ResilientHAQueueProducer   │   │   OCI Queue – Primary   │   │   OCI Queue – Secondary   │
+│        (Producer)            │   │   (Region A – Vinhedo)  │   │   (Region B – SP)         │
+└─────────────▲───────────────┘   └──────────────────────────┘   └───────────────────────────┘
+              │
+              │ messages + failover control
+              │
+┌─────────────┴──────────────┐
+│   ResilientQueueConsumer    │──────────────────────────────────────────────────────────────┐
+│      (Consumer)             │ consumes from Primary → if fail → loads new OCID → Secondary │
+└─────────────────────────────┘──────────────────────────────────────────────────────────────┘
+
+3. Explanation of the High Availability Flow
+
+1️⃣ Normal Flow
+Producer sends to Primary Queue – Region A (Vinhedo)
+Consumer reads from the Primary Queue
+
+2️⃣ Failure in the Primary Region
+Producer tries multiple times (exponential backoff)
+All attempts fail → failover begins
+
+3️⃣ Automatic Failover
+Producer detects that there is no Secondary Queue OCID
+Producer dynamically creates a new queue in Region B (SP)
+Producer saves the new OCID in queue.properties
+
+4️⃣ Automatic Consumer Update
+Consumer, before each read from the secondary queue, calls:
+
+  QueueUtils.loadSecondaryQueue()
+  
+4. Compact version of the Diagram
+Producer ──► Primary Queue (Vinhedo)
+   │              │
+   │ [failover]   ▼
+   ├──── create Secondary Queue (SP)
+   │              │
+   └────────────► Secondary Queue (SP)
+
+Consumer:
+   Try Primary → Fail → loadSecondaryQueue() → Secondary
 
 | File/Class | Primary Role | Configuration Dependencies |
 | :---- | :---- | :---- |
