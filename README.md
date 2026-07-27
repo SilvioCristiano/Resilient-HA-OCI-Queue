@@ -274,14 +274,16 @@ To validate fan-out, configure two independent Consumer Groups with matching fil
 
 ## **9\. Implemented practices**
 
-- Native fan-out with Consumer Groups and attribute-based filters.
-- **At-least-once** consumption: a message is deleted only after `MessageHandler` completes successfully.
-- `businessKey` support for idempotent processing.
-- Long polling in a dedicated worker, outside request threads.
-- Bounded retries for `408`, `429`, and `5xx`, with exponential backoff and jitter.
-- Failover to a pre-provisioned secondary queue after primary failure.
-- Processing failures remain unacknowledged, allowing redelivery or DLQ routing.
-- OCIDs, endpoints, and the OCI profile are externalized through environment variables.
+| Practice | Objective | Implementation |
+| :---- | :---- | :---- |
+| Native fan-out | Deliver the same event to independent services without duplicating queues. | `QueuePublisher` writes routing attributes to `MessageMetadata.customProperties`; OCI Consumer Group filters route matching messages. |
+| At-least-once consumption | Avoid message loss while processing. | `QueueConsumerWorker` calls `DeleteMessage` only after `MessageHandler` completes successfully. |
+| Idempotent consumer | Allow redelivery without duplicate business effects. | Events carry `businessKey`; the business handler must enforce a durable idempotency control, such as a unique database constraint or an outbox record. |
+| Long polling | Reduce empty polling and keep queue I/O outside request threads. | A dedicated `SmartLifecycle` worker uses `GetMessages` with configurable batch size and poll timeout. |
+| Retry with backoff | Absorb transient OCI errors without immediate failover. | `QueuePublisher` retries `408`, `429`, and `5xx` failures using bounded exponential backoff with jitter. |
+| Regional failover | Continue publishing or polling when the primary queue is unavailable. | The publisher and consumer attempt the pre-provisioned secondary queue after a primary failure. |
+| Redelivery and DLQ | Isolate permanent processing failures. | Failed messages are not acknowledged, allowing OCI redelivery and the queue's configured DLQ policy. |
+| Externalized configuration | Keep endpoints, OCIDs, and credentials out of source code. | Queue settings are read from environment variables and the OCI SDK profile, with IAM separated between runtime and provisioning roles. |
 
 ## **10\. Observability**
 
