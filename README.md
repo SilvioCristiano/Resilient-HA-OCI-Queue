@@ -3,8 +3,9 @@
 This solution demonstrates the resilience of a Java application (Producer and Consumer) utilizing the OCI Queue Messaging service. The system is configured to operate primarily in one region (Region A \- Vinhedo, in the example) and execute an **automatic failover** to a secondary region (Region B \- São Paulo, in the example) in case the primary queue becomes unavailable.
 
 ## **1\. Resilience Architecture Overview**
-![Technical architecture](imagemqueue1.png "Technical architecture — reliable OCI Queue flow")
 ![High-level architecture](imagemqueue2.png "High-level architecture — fan-out and regional continuity")
+![Technical architecture](imagemqueue1.png "Technical architecture — reliable OCI Queue flow")
+
 The solution implements the following HA flow:
 
 ![Logo da empresa](p1.png "Produce")
