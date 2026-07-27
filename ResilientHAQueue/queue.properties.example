@@ -1,0 +1,3 @@
+# Migration aid only. Configure the application through environment variables
+# documented in src/main/resources/application.properties. Do not store OCIDs here.
+OCI_QUEUE_SECONDARY_ID=
