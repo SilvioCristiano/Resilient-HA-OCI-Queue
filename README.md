@@ -196,3 +196,145 @@ The main class responsible for running the message consumption loop with built-i
 | consumeFromPrimary() | Executes the getMessages request on the primaryClient and prints consumed messages. |
 | consumeFromSecondary() | Executes the getMessages request on the secondaryClient. Crucially, **it calls QueueUtils.loadSecondaryQueue()** at the start to fetch the most up-to-date Secondary Queue OCID from the configuration file, ensuring it can consume from the newly provisioned queue if failover occurred on the Producer side. |
 | isRetryableError(Exception ex) | Checks if the OCI SDK exception (5xx or 429 status codes) is a temporary error that should trigger a retry attempt in the primary consumption loop. |
+
+## **4\. Prerequisites**
+
+- Java 17 installed and selected as the application JDK.
+- An OCI tenancy with access to the **OCI Queue** service.
+- Pre-provisioned primary and secondary queues, including their OCIDs and endpoints.
+- A valid OCI profile in `~/.oci/config` (or another path provided through an environment variable).
+- IAM permissions: `queue-push` for the producer and `queue-pull` for the consumer.
+- Consumer Groups created when fan-out with attribute filters is required.
+
+> The current Spring Boot implementation is in [`ResilientHAQueue`](ResilientHAQueue/README.md). It uses pre-provisioned queues and does not create OCI resources at runtime.
+
+## **5\. Quick configuration**
+
+In the `ResilientHAQueue` directory, set the OCI and queue configuration:
+
+```bash
+export OCI_CONFIG_FILE="$HOME/.oci/config"
+export OCI_CONFIG_PROFILE=DEFAULT
+export OCI_QUEUE_PRIMARY_ID='ocid1.queue...'
+export OCI_QUEUE_PRIMARY_ENDPOINT='https://cell-1.queue.messaging.<region>.oci.oraclecloud.com'
+export OCI_QUEUE_SECONDARY_ID='ocid1.queue...'
+export OCI_QUEUE_SECONDARY_ENDPOINT='https://cell-1.queue.messaging.<region>.oci.oraclecloud.com'
+export OCI_QUEUE_PRIMARY_CONSUMER_GROUP_ID='ocid1.queueconsumergroup...'
+export OCI_QUEUE_SECONDARY_CONSUMER_GROUP_ID='ocid1.queueconsumergroup...'
+export OCI_QUEUE_CONSUMER_ENABLED=true
+```
+
+```bash
+cd ResilientHAQueue
+./mvnw test
+./mvnw spring-boot:run
+```
+
+## **6\. Running in Eclipse**
+
+1. Open **File > Import > Maven > Existing Maven Projects** and select `ResilientHAQueue`.
+2. Configure Java 17 in **Window > Preferences > Java > Installed JREs**.
+3. Create a run configuration for `com.playbook.ai.RestServiceApplication`.
+4. On the **Environment** tab, add the variables from the quick configuration section.
+5. Run the application and follow the logs in the **Console** view.
+
+After changing the Java version, use **Maven > Update Project**.
+
+## **7\. Configuration variables**
+
+| Variable | Required | Default | Purpose |
+| :---- | :---- | :---- | :---- |
+| `OCI_CONFIG_FILE` | No | `~/.oci/config` | OCI SDK configuration file path. |
+| `OCI_CONFIG_PROFILE` | No | `DEFAULT` | OCI profile to use. |
+| `OCI_QUEUE_PRIMARY_ID` | Yes | — | Primary queue OCID. |
+| `OCI_QUEUE_PRIMARY_ENDPOINT` | Yes | — | Primary queue endpoint. |
+| `OCI_QUEUE_PRIMARY_CONSUMER_GROUP_ID` | No | Empty | Primary queue consumer group; empty uses the Primary Consumer Group. |
+| `OCI_QUEUE_SECONDARY_ID` | Yes | — | Secondary queue OCID. |
+| `OCI_QUEUE_SECONDARY_ENDPOINT` | Yes | — | Secondary queue endpoint. |
+| `OCI_QUEUE_SECONDARY_CONSUMER_GROUP_ID` | No | Empty | Secondary queue consumer group. |
+| `OCI_QUEUE_CONSUMER_ENABLED` | No | `false` | Enables the long-polling worker. |
+| `OCI_QUEUE_BATCH_SIZE` | No | `10` | Maximum messages per poll (1–100). |
+| `OCI_QUEUE_POLL_TIMEOUT_SECONDS` | No | `30` | Long-poll timeout (0–30 seconds). |
+| `OCI_QUEUE_VISIBILITY_TIMEOUT_SECONDS` | No | `60` | Processing time before a message becomes visible again. |
+| `OCI_QUEUE_RETRY_MAX_ATTEMPTS` | No | `3` | Publish attempts before failover. |
+| `OCI_QUEUE_RETRY_INITIAL_DELAY_MS` | No | `250` | Initial exponential-backoff delay. |
+| `OCI_QUEUE_RETRY_MAX_DELAY_MS` | No | `5000` | Backoff upper limit. |
+
+## **8\. Testing through the OCI Console**
+
+1. Start the application with `OCI_QUEUE_CONSUMER_ENABLED=true`.
+2. In the OCI Console, open the primary queue and publish a message.
+3. Use the body `{"orderId":"o-123"}` and the attributes `eventType=order.created`, `region=sa-saopaulo-1`, and `businessKey=o-123`.
+4. Confirm the attributes match the Consumer Group filter.
+5. Check the logs to confirm processing and acknowledgement.
+
+To validate fan-out, configure two independent Consumer Groups with matching filters. Filters are evaluated at publish time; do not use the JSON body for routing.
+
+## **9\. Implemented practices**
+
+- Native fan-out with Consumer Groups and attribute-based filters.
+- **At-least-once** consumption: a message is deleted only after `MessageHandler` completes successfully.
+- `businessKey` support for idempotent processing.
+- Long polling in a dedicated worker, outside request threads.
+- Bounded retries for `408`, `429`, and `5xx`, with exponential backoff and jitter.
+- Failover to a pre-provisioned secondary queue after primary failure.
+- Processing failures remain unacknowledged, allowing redelivery or DLQ routing.
+- OCIDs, endpoints, and the OCI profile are externalized through environment variables.
+
+## **10\. Observability**
+
+| Metric | Description |
+| :---- | :---- |
+| `oci.queue.messages.published` | Successfully published messages. |
+| `oci.queue.messages.publish.failed` | Publish operations that exhausted retries. |
+| `oci.queue.messages.consumed` | Messages acknowledged after successful processing. |
+| `oci.queue.messages.processing.failed` | Failures left for redelivery or DLQ routing. |
+
+Create OCI Monitoring alarms for backlog, DLQ depth, publish failures, consumer errors, and messages without a matching filter.
+
+## **11\. Troubleshooting**
+
+| Symptom | Recommended check |
+| :---- | :---- |
+| Startup validation failure | Provide OCIDs and endpoints for both queues. |
+| `401` or `403` response | Validate OCI profile, key, and IAM policies. |
+| Consumer receives no messages | Check `OCI_QUEUE_CONSUMER_ENABLED`, Consumer Group, attributes, and filter. |
+| A message reappears | Processing exceeded the visibility timeout or failed before acknowledgement. |
+| Duplicate processing | Expected at-least-once behavior; use `businessKey` for idempotency. |
+| Messages in the DLQ | Inspect exceptions, max delivery attempts, and visibility timeout before replay. |
+| Secondary queue is used | Analyze logs, endpoint, DNS, network, and OCI availability. |
+
+## **12\. Security**
+
+- Do not commit `~/.oci/config`, private keys, real OCIDs, or local files containing secrets.
+- Prefer Instance Principals, Workload Identity, or a secrets vault in production.
+- Apply least privilege: `queue-push` for the producer, `queue-pull` for the consumer, and administration only for automation.
+- Do not store sensitive data in message attributes; they are routing metadata.
+- Protect the DLQ and apply retention and key-rotation policies.
+
+## **13\. Useful commands**
+
+Run these commands from the `ResilientHAQueue` directory:
+
+```bash
+# Check the Java version
+java -version
+
+# Run unit tests
+./mvnw test
+
+# Build the executable JAR
+./mvnw clean package
+
+# Start with the Maven Wrapper
+./mvnw spring-boot:run
+
+# Start the packaged artifact
+java -jar target/resilient-ha-oci-queue-1.0.0-SNAPSHOT.jar
+
+# Display the dependency tree
+./mvnw dependency:tree
+
+# Start without enabling the consumer
+OCI_QUEUE_CONSUMER_ENABLED=false ./mvnw spring-boot:run
+```
